@@ -1,0 +1,126 @@
+id	name
+ppa01100	Metabolic pathways
+ppa01110	Biosynthesis of secondary metabolites
+ppa01200	Carbon metabolism
+ppa01210	2-Oxocarboxylic acid metabolism
+ppa01212	Fatty acid metabolism
+ppa01230	Biosynthesis of amino acids
+ppa01232	Nucleotide metabolism
+ppa01250	Biosynthesis of nucleotide sugars
+ppa01240	Biosynthesis of cofactors
+ppa00010	Glycolysis / Gluconeogenesis
+ppa00020	Citrate cycle (TCA cycle)
+ppa00030	Pentose phosphate pathway
+ppa00040	Pentose and glucuronate interconversions
+ppa00051	Fructose and mannose metabolism
+ppa00052	Galactose metabolism
+ppa00053	Ascorbate and aldarate metabolism
+ppa00500	Starch and sucrose metabolism
+ppa00520	Amino sugar and nucleotide sugar metabolism
+ppa00620	Pyruvate metabolism
+ppa00630	Glyoxylate and dicarboxylate metabolism
+ppa00640	Propanoate metabolism
+ppa00650	Butanoate metabolism
+ppa00660	C5-Branched dibasic acid metabolism
+ppa00562	Inositol phosphate metabolism
+ppa00190	Oxidative phosphorylation
+ppa00680	Methane metabolism
+ppa00910	Nitrogen metabolism
+ppa00920	Sulfur metabolism
+ppa00061	Fatty acid biosynthesis
+ppa00062	Fatty acid elongation
+ppa00071	Fatty acid degradation
+ppa00100	Steroid biosynthesis
+ppa00561	Glycerolipid metabolism
+ppa00564	Glycerophospholipid metabolism
+ppa00565	Ether lipid metabolism
+ppa00600	Sphingolipid metabolism
+ppa00590	Arachidonic acid metabolism
+ppa00592	alpha-Linolenic acid metabolism
+ppa01040	Biosynthesis of unsaturated fatty acids
+ppa00230	Purine metabolism
+ppa00240	Pyrimidine metabolism
+ppa00250	Alanine, aspartate and glutamate metabolism
+ppa00260	Glycine, serine and threonine metabolism
+ppa00270	Cysteine and methionine metabolism
+ppa00280	Valine, leucine and isoleucine degradation
+ppa00290	Valine, leucine and isoleucine biosynthesis
+ppa00300	Lysine biosynthesis
+ppa00310	Lysine degradation
+ppa00220	Arginine biosynthesis
+ppa00330	Arginine and proline metabolism
+ppa00340	Histidine metabolism
+ppa00350	Tyrosine metabolism
+ppa00360	Phenylalanine metabolism
+ppa00380	Tryptophan metabolism
+ppa00400	Phenylalanine, tyrosine and tryptophan biosynthesis
+ppa00410	beta-Alanine metabolism
+ppa00430	Taurine and hypotaurine metabolism
+ppa00440	Phosphonate and phosphinate metabolism
+ppa00450	Selenocompound metabolism
+ppa00460	Cyanoamino acid metabolism
+ppa00470	D-Amino acid metabolism
+ppa00480	Glutathione metabolism
+ppa00510	N-Glycan biosynthesis
+ppa00513	Various types of N-glycan biosynthesis
+ppa00515	Mannose type O-glycan biosynthesis
+ppa00514	Other types of O-glycan biosynthesis
+ppa00563	Glycosylphosphatidylinositol (GPI)-anchor biosynthesis
+ppa00604	Glycosphingolipid biosynthesis - ganglio series
+ppa00511	Other glycan degradation
+ppa00730	Thiamine metabolism
+ppa00740	Riboflavin metabolism
+ppa00750	Vitamin B6 metabolism
+ppa00760	Nicotinate and nicotinamide metabolism
+ppa00770	Pantothenate and CoA biosynthesis
+ppa00780	Biotin metabolism
+ppa00785	Lipoic acid metabolism
+ppa00790	Folate biosynthesis
+ppa00670	One carbon pool by folate
+ppa00860	Porphyrin metabolism
+ppa00130	Ubiquinone and other terpenoid-quinone biosynthesis
+ppa00900	Terpenoid backbone biosynthesis
+ppa00909	Sesquiterpenoid and triterpenoid biosynthesis
+ppa00232	Caffeine metabolism
+ppa00332	Carbapenem biosynthesis
+ppa00261	Monobactam biosynthesis
+ppa00999	Biosynthesis of various plant secondary metabolites
+ppa00791	Atrazine degradation
+ppa03020	RNA polymerase
+ppa03022	Basal transcription factors
+ppa03040	Spliceosome
+ppa03010	Ribosome
+ppa00970	Aminoacyl-tRNA biosynthesis
+ppa03013	Nucleocytoplasmic transport
+ppa03015	mRNA surveillance pathway
+ppa03008	Ribosome biogenesis in eukaryotes
+ppa03060	Protein export
+ppa04141	Protein processing in endoplasmic reticulum
+ppa04130	SNARE interactions in vesicular transport
+ppa04120	Ubiquitin mediated proteolysis
+ppa04122	Sulfur relay system
+ppa03050	Proteasome
+ppa03018	RNA degradation
+ppa03030	DNA replication
+ppa03410	Base excision repair
+ppa03420	Nucleotide excision repair
+ppa03430	Mismatch repair
+ppa03440	Homologous recombination
+ppa03450	Non-homologous end-joining
+ppa03082	ATP-dependent chromatin remodeling
+ppa03083	Polycomb repressive complex
+ppa03250	Viral life cycle - HIV-1
+ppa02010	ABC transporters
+ppa04011	MAPK signaling pathway - yeast
+ppa04392	Hippo signaling pathway - multiple species
+ppa04070	Phosphatidylinositol signaling system
+ppa04144	Endocytosis
+ppa04145	Phagosome
+ppa04146	Peroxisome
+ppa04138	Autophagy - yeast
+ppa04136	Autophagy - other
+ppa04139	Mitophagy - yeast
+ppa04111	Cell cycle - yeast
+ppa04113	Meiosis - yeast
+ppa04814	Motor proteins
+ppa04213	Longevity regulating pathway - multiple species
