@@ -253,20 +253,13 @@ generate_volcano_tp <- function(df, logfc1, logfc2){
 
 
 # Define UI
-sidebar <- dashboardSidebar(
-  sidebarMenu(
-    menuItem("Select samples", tabName = "upload"),
-    menuItem("Group comparions", tabName = "tp"),
-    menuItem("Annotations index", tabName = "full_index")
-    
-  )
-)
+
 
 jscode <- "shinyjs.refresh_page = function() { history.go(0); }"
 ui <- dashboardPage(
   dashboardHeader(title = "Differential Expression"),
   dashboardSidebar(
-    sidebarMenu(
+    sidebarMenu( id = "sidebar_menu",
       menuItem("Experiment Selector", tabName = "experiment_selector", icon = icon("flask")),
       menuItem("TP Analysis", tabName = "tp", icon = icon("chart-bar")),
       menuItem("Full Index", tabName = "full_index", icon = icon("table"))
@@ -277,28 +270,26 @@ ui <- dashboardPage(
       tabItem(
         tabName = "experiment_selector",
         fluidRow(
-        column(width = 4,
-        selectInput(
-          inputId = "experiment_selector",
-          label = "Select Experiment(s):",
-          choices = dbGetQuery(myconn, "SELECT DISTINCT EXPERIMENT_NAME FROM RNA_SEQ_READ_COUNTS")$EXPERIMENT_NAME,
-          multiple = TRUE
+          column(width = 4,
+                 selectInput(
+                   inputId = "experiment_selector",
+                   label = "Select Experiment(s):",
+                   choices = dbGetQuery(myconn, "SELECT DISTINCT EXPERIMENT_NAME FROM RNA_SEQ_READ_COUNTS")$EXPERIMENT_NAME,
+                   multiple = TRUE
+                 ),
+                 uiOutput("all_sample_select"),
+                 uiOutput("sample_selector_ui")
+                 
+          ),
+          
+          column(width = 8,
+                 
+                 uiOutput("custom_name_ui"),
+                 br(), br(),
+                 uiOutput("submit") 
+          )
         ),
-        uiOutput("all_sample_select"),
-        uiOutput("sample_selector_ui")
         
-        ),
-        
-        column(width = 8,
-               
-        uiOutput("custom_name_ui"),
-        br(), br(),
-        uiOutput("drop_down_tp_volcano"),
-        br(), br(),
-        uiOutput("calculate_de_ui") 
-        )
-        ),
-      
       ),
       tabItem(
         tabName = "tp",
@@ -307,10 +298,17 @@ ui <- dashboardPage(
           column(
             width = 6,
             uiOutput("reference_selector"),
+            
           ),
           column(
             width = 6,
-            uiOutput("volcano_samples_selector"),
+            uiOutput("samples_to_use"),
+          )
+        ),
+        fluidRow(
+          column(
+            width = 6,
+            uiOutput("calculate_de"),
           )
         ),
         fluidRow(
@@ -320,7 +318,7 @@ ui <- dashboardPage(
             height = "1000px",
             tabPanel(
               "Volcano plot",
-           
+              
               fluidRow(
                 column(width = 4, downloadButton("download_volcano_tp", "Download Plot"))
               ),
@@ -449,6 +447,7 @@ server <- function(input, output, session) {
     )
   })
   
+  
   output$custom_name_ui <- renderUI({
     req(input$sample_selector)
     tagList(
@@ -473,7 +472,7 @@ server <- function(input, output, session) {
   
   observeEvent(input$custom_name_table_cell_edit, {
     info <- input$custom_name_table_cell_edit
-    if (info$col == 1) {  # Ensure updates only happen in the "CustomName" column
+    if (info$col == 1) {  
       custom_names$data[info$row, "CustomName"] <- info$value
     }
   })
@@ -485,24 +484,15 @@ server <- function(input, output, session) {
       custom_names$data,
       editable = list(target = "cell", disable = list(columns = 0)),
       rownames = FALSE,
-      options = list(pageLength = 100)  # Set default rows per page to 100
+      options = list(pageLength = 100)
     )
   })
   
+
   
-  output$drop_down_tp_volcano <- renderUI({
-    req(length(get_grouping_from_custom_names()) > 0, !any(is.na(get_grouping_from_custom_names())))
-    
-    selectInput("tp_ref",
-                label = "Select reference:",
-                choices = NULL,  
-                selected = NULL
-                )
-  })
-  
-  output$calculate_de_ui <- renderUI({
-    req(input$tp_ref)
-    actionButton("calculate_de", "Calculate")
+  output$submit <- renderUI({
+    req(length(get_grouping_from_custom_names()) > 0, !any(is.na(get_grouping_from_custom_names())))  
+    actionButton("submit", "Submit")
   })
   
   
@@ -527,13 +517,11 @@ server <- function(input, output, session) {
     }
   })
   
- 
-  
-  observeEvent(custom_name_index(), {
-    updateSelectInput(session, "tp_ref",
-                      choices = unique(custom_names$data$CustomName),
-                      selected = character(0))  # 🔹 Prevents automatic selection
+  observeEvent(input$submit, {
+    updateTabItems(session, "sidebar_menu", selected = "tp")  # "sidebar_menu" is the ID of your dashboardSidebar menu
   })
+  
+ 
   
   get_grouping_from_custom_names <- reactive({
     req(custom_names$data)
@@ -543,11 +531,23 @@ server <- function(input, output, session) {
     return(group)
   })
   
-  observeEvent(input$calculate_de,{
-    output$reference_selector<- renderUI({
-     # selectInput("volcano_reference", choices = c("cat","dog"), label = "Select Reference:" )
+  observeEvent(input$submit, {
+    output$reference_selector <- renderUI({
+      selectInput("tp_ref", label = "Select Reference:", choices = unique(custom_names$data$CustomName))
+      
     })
+    output$calculate_de <- renderUI({
+    actionButton("calculate_de", "Calculate")
+    })
+    
+    output$samples_to_use <- renderUI({
+      selectInput("samples_to_use", label = "Select Contrasts:", choices = setdiff(unique(custom_names$data$CustomName),input$tp_ref), multiple = TRUE)
+    })
+    
+    
   })
+  
+ 
   
   ## generate dge list
   y<- reactive({
@@ -556,9 +556,10 @@ server <- function(input, output, session) {
   
   
   
-  de_results <- eventReactive(input$calculate_de, {
-    req(custom_names$data)
+  de_results <- reactiveVal(NULL)
     
+    observeEvent(input$calculate_de,{
+
     sample_counts <- table(custom_names$data$CustomName)
     unique_samples <- length(sample_counts)
     
@@ -566,20 +567,17 @@ server <- function(input, output, session) {
       return(NULL)  # Stop execution if validation fails
     }
     
-
-      within_strain_de_calculator(y(), input$tp_ref, custom_name_index(), get_grouping_from_custom_names())
-   
-    })
+    
+    result<- within_strain_de_calculator(y(), input$tp_ref, custom_name_index(), get_grouping_from_custom_names())
+    de_results(result)
+  })
   
+  observe({
+    print(de_results())
+  })
   
- 
-  
- 
   
   observeEvent(input$calculate_de, {
-   
-   
-    
     
     output$tp_volcano_plot<- renderPlot({
       if(is.null(de_results())){
@@ -594,7 +592,7 @@ server <- function(input, output, session) {
                              max.overlaps = 30)}
       }
       tpvolcano})
-   
+    
     
     #de table tab
     tp_de_table<- reactive({
@@ -634,7 +632,7 @@ server <- function(input, output, session) {
     
     #CHATGPT FUNCTION
     strain_gpt_response<- eventReactive(input$strain_chatgpt,{
-     if(nrow(tp_de_table())<51){
+      if(nrow(tp_de_table())<51){
         list_of_genes <- tp_de_table() %>% select(Gene, Regulation)
         list_of_genes<- paste(apply(list_of_genes, 1, paste, collapse = "\t"), collapse = "\n")
         question <- paste("I am running a differential transcriptomics expreriment between two strains of Pichia pastoris. What are the functional implications of this result?", list_of_genes)
