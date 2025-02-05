@@ -26,7 +26,6 @@ library(odbc)
 library(dotenv)
 library(RPostgres)
 
-
 api_key_chatgpt <- Sys.getenv("CHAT_GPT_KEY")
 
 
@@ -180,7 +179,6 @@ within_strain_de_calculator <- function(y_obj, tp_ref, custom_name_index_df, cus
       
       genes <- rownames(lrt$table)
       
-      # **Fix Here**: Get the actual custom names using the precomputed dataframe
       test_group_name <- custom_name_index_df[custom_name_index_df$Group == group, "CustomName"]
       ref_group_name <- custom_name_index_df[custom_name_index_df$Group == tp_ref_group, "CustomName"]
       
@@ -266,7 +264,7 @@ sidebar <- dashboardSidebar(
 
 jscode <- "shinyjs.refresh_page = function() { history.go(0); }"
 ui <- dashboardPage(
-  dashboardHeader(title = "Dashboard"),
+  dashboardHeader(title = "Differential Expression"),
   dashboardSidebar(
     sidebarMenu(
       menuItem("Experiment Selector", tabName = "experiment_selector", icon = icon("flask")),
@@ -306,6 +304,16 @@ ui <- dashboardPage(
         tabName = "tp",
         h2(""),
         fluidRow(
+          column(
+            width = 6,
+            uiOutput("reference_selector"),
+          ),
+          column(
+            width = 6,
+            uiOutput("volcano_samples_selector"),
+          )
+        ),
+        fluidRow(
           tabBox(
             title = "",
             width = 16,
@@ -331,7 +339,6 @@ ui <- dashboardPage(
                 column(
                   width = 2,
                   downloadButton("download_tp_de_table", "Download DE table"),
-                  actionButton("download_tp_de_table_ica", "Download DE table")
                 ),
                 column(
                   width = 3,
@@ -401,26 +408,31 @@ server <- function(input, output, session) {
     selectizeInput(
       inputId = "sample_selector",
       label = "Select Sample(s):",
-      choices = NULL,
+      choices = NULL,  
       multiple = TRUE
     )
   })
   
   observeEvent(input$experiment_selector, {
     req(input$experiment_selector)
+    
     query <- sprintf(
-      "SELECT SAMPLE_NAME FROM RNA_SEQ_READ_COUNTS WHERE EXPERIMENT_NAME IN ('%s')",
+      "SELECT DISTINCT SAMPLE_NAME FROM RNA_SEQ_READ_COUNTS WHERE EXPERIMENT_NAME IN ('%s')",
       paste(input$experiment_selector, collapse = "','")
     )
+    
     sample_names <- dbGetQuery(myconn, query)
     
     updateSelectizeInput(
       session,
       inputId = "sample_selector",
-      choices = sample_names$SAMPLE_NAME,
+      choices = as.vector(sample_names$SAMPLE_NAME),
       selected = NULL
     )
   }, ignoreNULL = FALSE)
+  
+  
+  
   
   observeEvent(input$select_all_samples, {
     req(input$experiment_selector)
@@ -472,16 +484,18 @@ server <- function(input, output, session) {
     DT::datatable(
       custom_names$data,
       editable = list(target = "cell", disable = list(columns = 0)),
-      rownames = FALSE
+      rownames = FALSE,
+      options = list(pageLength = 100)  # Set default rows per page to 100
     )
   })
+  
   
   output$drop_down_tp_volcano <- renderUI({
     req(length(get_grouping_from_custom_names()) > 0, !any(is.na(get_grouping_from_custom_names())))
     
     selectInput("tp_ref",
                 label = "Select reference:",
-                choices = NULL,  # 🔹 Start with NULL choices
+                choices = NULL,  
                 selected = NULL
                 )
   })
@@ -490,6 +504,8 @@ server <- function(input, output, session) {
     req(input$tp_ref)
     actionButton("calculate_de", "Calculate")
   })
+  
+  
   
   custom_name_index <- reactive({
     req(custom_names$data)
@@ -527,6 +543,11 @@ server <- function(input, output, session) {
     return(group)
   })
   
+  observeEvent(input$calculate_de,{
+    output$reference_selector<- renderUI({
+     # selectInput("volcano_reference", choices = c("cat","dog"), label = "Select Reference:" )
+    })
+  })
   
   ## generate dge list
   y<- reactive({
@@ -545,13 +566,13 @@ server <- function(input, output, session) {
       return(NULL)  # Stop execution if validation fails
     }
     
-    within_strain_de_calculator(y(), input$tp_ref, custom_name_index(), get_grouping_from_custom_names())
-  })
+
+      within_strain_de_calculator(y(), input$tp_ref, custom_name_index(), get_grouping_from_custom_names())
+   
+    })
   
   
-  observe({
-    print(de_results())
-  })
+ 
   
  
   
