@@ -502,9 +502,8 @@ server <- function(input, output, session) {
     unique(data.frame(CustomName = custom_names$data$CustomName, Group = get_grouping_from_custom_names()))
   })
   
-  observeEvent(input$calculate_de, {
+  observeEvent(input$submit, {
     sample_counts <- table(custom_names$data$CustomName)
-    print(sample_counts)  # Debugging step to verify grouping
     unique_samples <- length(sample_counts)
     min_replicates <- min(sample_counts)
     
@@ -518,7 +517,15 @@ server <- function(input, output, session) {
   })
   
   observeEvent(input$submit, {
-    updateTabItems(session, "sidebar_menu", selected = "tp")  # "sidebar_menu" is the ID of your dashboardSidebar menu
+    sample_counts <- table(custom_names$data$CustomName)
+    unique_samples <- length(sample_counts)
+    min_replicates <- min(sample_counts)
+    
+    if (unique_samples < 2 || min_replicates < 2) {
+      NULL
+    }else{
+      updateTabItems(session, "sidebar_menu", selected = "tp")  
+      }
   })
   
  
@@ -554,8 +561,11 @@ server <- function(input, output, session) {
     convert_to_dge_list(df = fetch_sample_data(input$sample_selector), group = get_grouping_from_custom_names() )
   })
   
-  
-  
+  contrasts_to_keep<- reactive({
+    req(input$samples_to_use)
+    paste(input$samples_to_use, "vs", input$tp_ref)
+  })
+ 
   de_results <- reactiveVal(NULL)
     
     observeEvent(input$calculate_de,{
@@ -569,12 +579,10 @@ server <- function(input, output, session) {
     
     
     result<- within_strain_de_calculator(y(), input$tp_ref, custom_name_index(), get_grouping_from_custom_names())
+    result<- result %>% filter(cond %in% contrasts_to_keep())
     de_results(result)
   })
   
-  observe({
-    print(de_results())
-  })
   
   
   observeEvent(input$calculate_de, {
