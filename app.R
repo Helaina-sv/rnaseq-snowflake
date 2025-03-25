@@ -564,10 +564,7 @@ server <- function(input, output, session) {
   y<- reactive({
     convert_to_dge_list(df = fetch_sample_data(input$sample_selector), group = get_grouping_from_custom_names() )
   })
-  observe({
-    print("y samples, line 573")
-    print(y())
-  })
+ 
   
   contrasts_to_keep<- reactive({
     req(input$samples_to_use)
