@@ -104,8 +104,12 @@ fetch_sample_data <- function(selected_samples) {
     paste(selected_samples, collapse = "','")
   )
   
-  dbGetQuery(myconn, query)
+  df<- dbGetQuery(myconn, query)
+  df$SAMPLE_NAME <- factor(df$SAMPLE_NAME, levels = selected_samples)
+  df <- df[order(df$SAMPLE_NAME), ]
 }
+
+
 
 convert_to_dge_list <- function(df, group) {
   req(df)
@@ -559,6 +563,10 @@ server <- function(input, output, session) {
   ## generate dge list
   y<- reactive({
     convert_to_dge_list(df = fetch_sample_data(input$sample_selector), group = get_grouping_from_custom_names() )
+  })
+  observe({
+    print("y samples, line 573")
+    print(y())
   })
   
   contrasts_to_keep<- reactive({
