@@ -70,6 +70,30 @@ call_openai_api <- function(question, model = "gpt-4o") {
   
   return(content$choices[[1]]$message$content)
 }
+
+#To maintain context awareness and carry the conversation
+
+call_openai_api_with_history <- function(message_history, model = "gpt-4o") {
+  url <- "https://api.openai.com/v1/chat/completions"
+  headers <- add_headers(
+    "Authorization" = paste("Bearer", api_key_chatgpt),
+    "Content-Type" = "application/json")
+  
+  body <- list(
+    model = model,
+    messages = message_history,
+    temperature = 0.7)
+  
+  response <- POST(url, headers, body = toJSON(body, auto_unbox = TRUE))
+  content <- content(response, "parsed")
+  
+  if(http_error(response)) {
+    return(paste("Error:", content$error$message))
+  }
+  
+  return(content$choices[[1]]$message$content)
+}
+
 dotenv::load_dot_env()
 connect_to_snowflake <- function(warehouse, database, schema) {
   # Attempt to connect to Snowflake using provided credentials
@@ -373,7 +397,8 @@ ui <- dashboardPage(
                 )
               ),
               wellPanel(
-                htmlOutput("strain_gpt_response")
+               
+                uiOutput("gpt_response_container")
               ),
               DTOutput("tp_comparison")
             ),
@@ -653,57 +678,138 @@ server <- function(input, output, session) {
       else{ "Wait..."}
     })
     
- 
+    conversation_history <- reactiveVal(list())
+    gene_context <- reactiveVal("")
+    
     strain_gpt_response <- eventReactive(input$strain_chatgpt, {
       if(nrow(tp_de_table()) <= 50) {
         de_genes <- tp_de_table()
         
-        gene_info <- list()
-        for(i in 1:nrow(de_genes)) {
-          gene_id <- de_genes$Gene[i]
+        withProgress(message = 'Analyzing genes...', {
+          incProgress(0.1, detail = "Preparing gene data...")
           
-          gene_name <- genenames$name[genenames$genes == gene_id]
-          if(length(gene_name) == 0) gene_name <- "Unknown"
-          
-          gene_pathways <- NA
-          if(gene_id %in% genenameskegg$genes) {
-            pathway_ids <- genenameskegg$pathway[genenameskegg$genes == gene_id]
-            pathway_names <- pathways$name[pathways$id %in% pathway_ids]
-            gene_pathways <- paste(pathway_names, collapse = ", ")
+          gene_info <- list()
+          for(i in 1:nrow(de_genes)) {
+            gene_id <- de_genes$Gene[i]
+            
+            gene_name <- genenames$name[genenames$genes == gene_id]
+            if(length(gene_name) == 0) gene_name <- "Unknown"
+            
+            gene_pathways <- NA
+            if(gene_id %in% genenameskegg$genes) {
+              pathway_ids <- genenameskegg$pathway[genenameskegg$genes == gene_id]
+              pathway_names <- pathways$name[pathways$id %in% pathway_ids]
+              gene_pathways <- paste(pathway_names, collapse = ", ")
+            }
+            
+            fold_change <- NA
+            if("log2FoldChange" %in% colnames(de_genes)) {
+              fold_change <- de_genes$log2FoldChange[i]
+            }
+            
+            gene_info[[i]] <- paste0(
+              "Gene: ", gene_id, 
+              " (", gene_name, ")", 
+              "\nRegulation: ", de_genes$Regulation[i],
+              if(!is.na(fold_change)) paste0("\nLog2 Fold Change: ", round(fold_change, 2)) else "",
+              if(!is.na(gene_pathways)) paste0("\nPathways: ", gene_pathways) else ""
+            )
           }
           
-          fold_change <- NA
-          if("log2FoldChange" %in% colnames(de_genes)) {
-            fold_change <- de_genes$log2FoldChange[i]
-          }
+          genes_context_text <- paste(unlist(gene_info), collapse = "\n\n")
+          gene_context(genes_context_text)
           
-          gene_info[[i]] <- paste0(
-            "Gene: ", gene_id, 
-            " (", gene_name, ")", 
-            "\nRegulation: ", de_genes$Regulation[i],
-            if(!is.na(fold_change)) paste0("\nLog2 Fold Change: ", round(fold_change, 2)) else "",
-            if(!is.na(gene_pathways)) paste0("\nPathways: ", gene_pathways) else ""
+          incProgress(0.2, detail = "Formulating question...")
+          
+          system_msg <- list(
+            role = "system", 
+            content = "You are a specialized bioinformatics assistant with expertise in Pichia pastoris (Komagataella phaffii) biology. Analyze gene expression data to identify functional implications, affected pathways, and biological significance. Focus on metabolic impact, stress responses, and cellular adaptations. Provide well-structured, scientifically accurate interpretations."
           )
-        }
-        
-        gene_context <- paste(unlist(gene_info), collapse = "\n\n")
-        
-        question <- paste(
-          "I am analyzing differential gene expression between two strains of Pichia pastoris (Komagataella phaffii).",
-          "Based on the differentially expressed genes below, what are the key functional implications, affected pathways, and potential biological significance?",
-          "Please focus on metabolic impact, stress responses, and any strain-specific adaptations that might be occurring.\n\n",
-          gene_context
-        )
-        
-        response <- call_openai_api(question, model = "gpt-4o")
-        return(response)
+          
+          user_msg <- list(
+            role = "user",
+            content = paste(
+              "I am analyzing differential gene expression between two strains of Pichia pastoris (Komagataella phaffii).",
+              "Based on the differentially expressed genes below, what are the key functional implications, affected pathways, and potential biological significance?",
+              "Please focus on metabolic impact, stress responses, and any strain-specific adaptations that might be occurring.\n\n",
+              genes_context_text
+            )
+          )
+          
+          history <- list(system_msg, user_msg)
+          conversation_history(history)
+          
+          incProgress(0.3, detail = "Sending to AI...")
+          
+          response <- call_openai_api_with_history(history, model = "gpt-4o")
+          
+          assistant_msg <- list(
+            role = "assistant",
+            content = response
+          )
+          
+          conversation_history(c(history, list(assistant_msg)))
+          
+          incProgress(1.0, detail = "Analysis complete")
+          return(response)
+        })
       } else {
         return("Please select no more than 50 genes for AI analysis")
       }
     })
     
+    followup_response <- eventReactive(input$submit_followup, {
+      if(input$followup_question == "") {
+        return("Please enter a follow-up question")
+      }
+      
+      withProgress(message = 'Processing follow-up...', {
+        history <- conversation_history()
+        
+        new_question <- list(
+          role = "user",
+          content = input$followup_question
+        )
+        
+        updated_history <- c(history, list(new_question))
+        
+        response <- call_openai_api_with_history(updated_history, model = "gpt-4o")
+        
+        new_response <- list(
+          role = "assistant",
+          content = response
+        )
+        
+        conversation_history(c(updated_history, list(new_response)))
+        
+        return(response)
+      })
+    })
+    
+    output$gpt_response_container <- renderUI({
+      if(is.null(strain_gpt_response()) || strain_gpt_response() == "") {
+        wellPanel(
+          htmlOutput("strain_gpt_response")
+        )
+      } else {
+        wellPanel(
+          htmlOutput("strain_gpt_response"),
+          hr(),
+          textAreaInput("followup_question", "Ask a follow-up question about these genes:", ""),
+          actionButton("submit_followup", "Ask Follow-up"),
+          htmlOutput("followup_response"),
+          hr(),
+          downloadButton("download_conversation", "Download Conversation")
+        )
+      }
+    })
+    
     output$strain_gpt_response <- renderUI({
       HTML(markdown::markdownToHTML(text = strain_gpt_response(), fragment.only = TRUE))
+    })
+    
+    output$followup_response <- renderUI({
+      HTML(markdown::markdownToHTML(text = followup_response(), fragment.only = TRUE))
     })
     
     #DE TABLE DOWNLOAD LOCALLY
@@ -730,6 +836,42 @@ server <- function(input, output, session) {
       }
     })
     
+    # Add this to your server code
+    output$download_conversation <- downloadHandler(
+      filename = function() {
+        paste("gene-analysis-conversation-", Sys.Date(), ".txt", sep="")
+      },
+      content = function(file) {
+        history <- conversation_history()
+        
+        # Format the conversation for better readability
+        conversation_text <- ""
+        
+        for (msg in history) {
+          if (msg$role == "system") {
+            # Skip system messages in the download
+            next
+          } else if (msg$role == "user") {
+            conversation_text <- paste0(conversation_text, "Question: ", msg$content, "\n\n")
+          } else if (msg$role == "assistant") {
+            conversation_text <- paste0(conversation_text, "Answer: ", msg$content, "\n\n")
+          }
+        }
+        
+        # Add metadata
+        header <- paste0(
+          "Gene Expression Analysis Conversation\n",
+          "Date: ", Sys.Date(), "\n",
+          "Number of genes analyzed: ", nrow(tp_de_table()), "\n\n",
+          "----------------\n\n"
+        )
+        
+        full_text <- paste0(header, conversation_text)
+        
+        # Write to file
+        writeLines(full_text, file)
+      }
+    )
     
     output$download_volcano_tp <- downloadHandler(
       filename = function() {"volcano_plot_tp.png"},content = function(file) {
