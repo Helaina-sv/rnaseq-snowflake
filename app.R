@@ -43,22 +43,33 @@ pathways$id<- gsub("ppa","", pathways$id)
 
 
 
-#function to use chatGPT API
-call_openai_api <- function(question) {
+call_openai_api <- function(question, model = "gpt-4o") {
   url <- "https://api.openai.com/v1/chat/completions"
   headers <- add_headers(
     "Authorization" = paste("Bearer", api_key_chatgpt),
     "Content-Type" = "application/json")
+  
+  system_msg <- "You are a specialized bioinformatics assistant with expertise in Pichia pastoris (Komagataella phaffii) biology. Analyze gene expression data to identify functional implications, affected pathways, and biological significance. Focus on metabolic impact, stress responses, and cellular adaptations. Provide well-structured, scientifically accurate interpretations."
+  
+  messages <- list(
+    list(role = "system", content = system_msg),
+    list(role = "user", content = question)
+  )
+  
   body <- list(
-    model = "gpt-3.5-turbo",
-    messages = list(
-      list(role = "user", content = question)),
+    model = model,
+    messages = messages,
     temperature = 0.7)
+  
   response <- POST(url, headers, body = toJSON(body, auto_unbox = TRUE))
   content <- content(response, "parsed")
+  
+  if(http_error(response)) {
+    return(paste("Error:", content$error$message))
+  }
+  
   return(content$choices[[1]]$message$content)
 }
-
 dotenv::load_dot_env()
 connect_to_snowflake <- function(warehouse, database, schema) {
   # Attempt to connect to Snowflake using provided credentials
@@ -358,11 +369,11 @@ ui <- dashboardPage(
                 ),
                 column(
                   width = 4,
-                  actionBttn("strain_chatgpt", "Ask ChatGPT about this result")
+                  actionBttn("strain_chatgpt", "Ask Vera about this result")
                 )
               ),
               wellPanel(
-                textOutput("strain_gpt_response")
+                htmlOutput("strain_gpt_response")
               ),
               DTOutput("tp_comparison")
             ),
@@ -642,24 +653,58 @@ server <- function(input, output, session) {
       else{ "Wait..."}
     })
     
-    
-    #CHATGPT FUNCTION
-    strain_gpt_response<- eventReactive(input$strain_chatgpt,{
-      if(nrow(tp_de_table())<51){
-        list_of_genes <- tp_de_table() %>% select(Gene, Regulation)
-        list_of_genes<- paste(apply(list_of_genes, 1, paste, collapse = "\t"), collapse = "\n")
-        question <- paste("I am running a differential transcriptomics expreriment between two strains of Pichia pastoris. What are the functional implications of this result?", list_of_genes)
-        response <- as.vector(call_openai_api(question))
+ 
+    strain_gpt_response <- eventReactive(input$strain_chatgpt, {
+      if(nrow(tp_de_table()) <= 50) {
+        de_genes <- tp_de_table()
+        
+        gene_info <- list()
+        for(i in 1:nrow(de_genes)) {
+          gene_id <- de_genes$Gene[i]
+          
+          gene_name <- genenames$name[genenames$genes == gene_id]
+          if(length(gene_name) == 0) gene_name <- "Unknown"
+          
+          gene_pathways <- NA
+          if(gene_id %in% genenameskegg$genes) {
+            pathway_ids <- genenameskegg$pathway[genenameskegg$genes == gene_id]
+            pathway_names <- pathways$name[pathways$id %in% pathway_ids]
+            gene_pathways <- paste(pathway_names, collapse = ", ")
+          }
+          
+          fold_change <- NA
+          if("log2FoldChange" %in% colnames(de_genes)) {
+            fold_change <- de_genes$log2FoldChange[i]
+          }
+          
+          gene_info[[i]] <- paste0(
+            "Gene: ", gene_id, 
+            " (", gene_name, ")", 
+            "\nRegulation: ", de_genes$Regulation[i],
+            if(!is.na(fold_change)) paste0("\nLog2 Fold Change: ", round(fold_change, 2)) else "",
+            if(!is.na(gene_pathways)) paste0("\nPathways: ", gene_pathways) else ""
+          )
+        }
+        
+        gene_context <- paste(unlist(gene_info), collapse = "\n\n")
+        
+        question <- paste(
+          "I am analyzing differential gene expression between two strains of Pichia pastoris (Komagataella phaffii).",
+          "Based on the differentially expressed genes below, what are the key functional implications, affected pathways, and potential biological significance?",
+          "Please focus on metabolic impact, stress responses, and any strain-specific adaptations that might be occurring.\n\n",
+          gene_context
+        )
+        
+        response <- call_openai_api(question, model = "gpt-4o")
         return(response)
+      } else {
+        return("Please select no more than 50 genes for AI analysis")
       }
-      else{
-        return("Please select no more than 50 genes for ChatGPT requests")
-      }
-    })
-    output$strain_gpt_response<- renderText({
-      strain_gpt_response()
     })
     
+    output$strain_gpt_response <- renderUI({
+      HTML(markdown::markdownToHTML(text = strain_gpt_response(), fragment.only = TRUE))
+    })
     
     #DE TABLE DOWNLOAD LOCALLY
     output$download_tp_de_table <- downloadHandler(
