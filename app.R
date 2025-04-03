@@ -25,7 +25,7 @@ library(dbplyr)
 library(odbc)
 library(dotenv)
 library(RPostgres)
-
+library(fgsea)
 api_key_chatgpt <- Sys.getenv("CHAT_GPT_KEY")
 
 
@@ -94,11 +94,49 @@ call_openai_api_with_history <- function(message_history, model = "gpt-4o") {
   return(content$choices[[1]]$message$content)
 }
 
+prepare_gene_rankings <- function(de_data) {
+  gene_list <- de_data$logFC
+  names(gene_list) <- de_data$genes
+  gene_list <- sort(gene_list, decreasing = TRUE)
+  return(gene_list)
+}
+
+prepare_pichia_pathways <- function() {
+  all_pathways <- list()
+  unique_pathways <- unique(pathways$id)
+  
+  for (pathway_id in unique_pathways) {
+    pathway_name <- pathways$name[pathways$id == pathway_id]
+    if (length(pathway_name) == 0) next
+    
+    pathway_genes <- genenameskegg$genes[genenameskegg$pathway == paste0("ppa", pathway_id)]
+    
+    if (length(pathway_genes) >= 5) {
+      all_pathways[[as.character(pathway_name)]] <- pathway_genes
+    }
+  }
+  
+  return(all_pathways)
+}
+
+perform_gsea <- function(ranked_genes, pathways, nperm = 1000) {
+  gsea_results <- fgsea(pathways = pathways,
+                        stats = ranked_genes,
+                        minSize = 5,
+                        maxSize = 500,
+                        nperm = nperm)
+  
+  gsea_results <- as.data.frame(gsea_results)
+  gsea_results <- gsea_results[order(gsea_results$NES, decreasing = TRUE),]
+  
+  return(gsea_results)
+}
+
 dotenv::load_dot_env()
 connect_to_snowflake <- function(warehouse, database, schema) {
   # Attempt to connect to Snowflake using provided credentials
   success <- tryCatch({
-    myconn <- dbConnect(odbc::odbc(), Sys.getenv("SNOWFLAKE_USER"), role = 'ACCOUNTADMIN', PWD = Sys.getenv("SNOWFLAKE_PASSWORD"))
+    myconn <- dbConnect(odbc::odbc(), Sys.getenv("SNOWFLAKE_USER"), role = 'shiny_app_role', PWD = Sys.getenv("SNOWFLAKE_PASSWORD"))
     
     # Set the warehouse, database, and schema to the specified values
     dbExecute(myconn, paste0("USE WAREHOUSE ", toupper(warehouse), ";"))
@@ -413,6 +451,35 @@ ui <- dashboardPage(
                 column(width = 4, uiOutput("drop_down_event_tp_kegg"))
               ),
               uiOutput("tp_pathway")
+            ),
+            tabPanel(
+              "GSEA Analysis",
+              fluidRow(
+                column(width = 12,
+                       box(
+                         width = 12,
+                         actionButton("run_gsea", "Run Gene Set Enrichment Analysis"),
+                         downloadButton("download_gsea_results", "Download GSEA Results")
+                       ),
+                       box(
+                         width = 12,
+                         selectInput("gsea_contrast", "Select Contrast for Analysis:", choices = NULL)
+                       )
+                )
+              ),
+              fluidRow(
+                column(width = 6,
+                       plotOutput("gsea_enrichment_plot", height = "500px")
+                ),
+                column(width = 6, 
+                       plotOutput("gsea_pathway_plot", height = "500px")
+                )
+              ),
+              fluidRow(
+                column(width = 12,
+                       DT::dataTableOutput("gsea_results_table")
+                )
+              )
             )
           )
         )
@@ -870,6 +937,119 @@ server <- function(input, output, session) {
         
         # Write to file
         writeLines(full_text, file)
+      }
+    )
+    updateSelectInput(session, "gsea_contrast", 
+                      choices = unique(de_results()$cond))
+    
+    gsea_results <- reactiveVal(NULL)
+    
+    observeEvent(input$run_gsea, {
+      req(de_results(), input$gsea_contrast)
+      
+      withProgress(message = 'Running GSEA analysis...', {
+        incProgress(0.2, detail = "Preparing gene rankings...")
+        
+        filtered_de <- de_results() %>% 
+          filter(cond == input$gsea_contrast)
+        
+        ranked_genes <- prepare_gene_rankings(filtered_de)
+        
+        incProgress(0.5, detail = "Loading pathways...")
+        
+        pathway_database <- prepare_pichia_pathways()
+        
+        incProgress(0.7, detail = "Running enrichment analysis...")
+        
+        gsea_result <- perform_gsea(ranked_genes, pathway_database)
+        
+        gsea_results(gsea_result)
+        
+        incProgress(1.0, detail = "Analysis complete")
+      })
+    })
+    
+    output$gsea_results_table <- DT::renderDataTable({
+      req(gsea_results())
+      
+      results <- gsea_results()
+      
+      results$pval <- format(results$pval, digits = 3, scientific = TRUE)
+      results$padj <- format(results$padj, digits = 3, scientific = TRUE)
+      
+      display_data <- results[, c("pathway", "pval", "padj", "NES", "size")]
+      colnames(display_data) <- c("Pathway", "P-value", "Adjusted P-value", "NES", "Size")
+      
+      DT::datatable(display_data, 
+                    options = list(pageLength = 10, 
+                                   autoWidth = TRUE,
+                                   scrollX = TRUE),
+                    rownames = FALSE) %>%
+        DT::formatStyle('NES',
+                        background = DT::styleColorBar(c(-max(abs(results$NES)), max(abs(results$NES))), 
+                                                       'lightblue'),
+                        backgroundSize = '98% 88%',
+                        backgroundRepeat = 'no-repeat',
+                        backgroundPosition = 'center')
+    })
+    
+    output$gsea_enrichment_plot <- renderPlot({
+      req(gsea_results())
+      
+      results <- gsea_results()
+      
+      top_pos <- head(results[results$NES > 0, ], 10)
+      top_neg <- head(results[results$NES < 0, ], 10)
+      top_pathways <- rbind(top_pos, top_neg)
+      
+      if(nrow(top_pathways) == 0) {
+        plot(0, 0, type = "n", axes = FALSE, xlab = "", ylab = "")
+        text(0, 0, "No significant pathways found", cex = 1.5)
+        return()
+      }
+      
+      ggplot(top_pathways, aes(x = reorder(pathway, NES), y = NES, fill = padj < 0.05)) +
+        geom_bar(stat = "identity") +
+        scale_fill_manual(values = c("grey", "red"), name = "Significant") +
+        coord_flip() +
+        labs(title = "Top Enriched Pathways", x = "Pathway", y = "Normalized Enrichment Score") +
+        theme_minimal() +
+        theme(axis.text.y = element_text(size = 10))
+    })
+    
+    output$gsea_pathway_plot <- renderPlot({
+      req(gsea_results(), input$gsea_results_table_rows_selected)
+      
+      results <- gsea_results()
+      selected_row <- input$gsea_results_table_rows_selected
+      
+      if(length(selected_row) == 0) {
+        plot(0, 0, type = "n", axes = FALSE, xlab = "", ylab = "")
+        text(0, 0, "Select a pathway from the table to see enrichment plot", cex = 1.2)
+        return()
+      }
+      
+      selected_pathway <- results$pathway[selected_row]
+      
+      filtered_de <- de_results() %>% 
+        filter(cond == input$gsea_contrast)
+      
+      ranked_genes <- prepare_gene_rankings(filtered_de)
+      
+      pathway_database <- prepare_pichia_pathways()
+      pathway_genes <- pathway_database[[selected_pathway]]
+      
+      plotEnrichment(pathway_genes, ranked_genes) + 
+        labs(title = selected_pathway) +
+        theme_minimal()
+    })
+    
+    output$download_gsea_results <- downloadHandler(
+      filename = function() { 
+        paste0("GSEA_results_", gsub(" ", "_", input$gsea_contrast), "_", Sys.Date(), ".csv") 
+      },
+      content = function(file) {
+        write.csv(gsea_results(), file, row.names = FALSE)
       }
     )
     
