@@ -95,6 +95,28 @@ call_openai_api_with_history <- function(message_history, model = "gpt-4o") {
   return(content$choices[[1]]$message$content)
 }
 
+
+read_gmt_file <- function(gmt_file) {
+  lines <- readLines(gmt_file)
+  pathway_list <- list()
+  
+  for(line in lines) {
+    fields <- unlist(strsplit(line, "\t"))
+    pathway_id <- fields[1]
+    pathway_name <- fields[2]
+    genes <- fields[3:length(fields)]
+    
+    # Remove any empty genes that might be at the end
+    genes <- genes[genes != ""]
+    
+    if(length(genes) >= 5) {  # Keep the minimum gene set size check
+      pathway_list[[pathway_name]] <- genes
+    }
+  }
+  
+  return(pathway_list)
+}
+
 prepare_gene_rankings <- function(de_data) {
   gene_list <- de_data$logFC
   names(gene_list) <- de_data$genes
@@ -103,21 +125,44 @@ prepare_gene_rankings <- function(de_data) {
 }
 
 prepare_pichia_pathways <- function() {
-  all_pathways <- list()
-  unique_pathways <- unique(pathways$id)
+  # Read pathways from GMT file
+  gmt_pathways <- read_gmt_file("ppa_geneSet.gmt")
+  return(gmt_pathways)
+}
+map_gene_ids_for_gsea <- function(de_data) {
+  # Create a copy of input data
+  mapped_genes <- de_data
   
-  for (pathway_id in unique_pathways) {
-    pathway_name <- pathways$name[pathways$id == pathway_id]
-    if (length(pathway_name) == 0) next
+  # Remove any prefix like "lcl|" if present 
+ # mapped_genes$genes <- gsub("lcl\\|", "", mapped_genes$genes)
+  
+  # For each gene in the DE results, match to the Kegg ID
+  for (i in 1:nrow(mapped_genes)) {
+    current_gene <- mapped_genes$genes[i]
     
-    pathway_genes <- genenameskegg$genes[genenameskegg$pathway == paste0("ppa", pathway_id)]
+    # Find the row in full_index that matches this gene ID
+    match_idx <- match(current_gene, full_index$genes)
     
-    if (length(pathway_genes) >= 5) {
-      all_pathways[[as.character(pathway_name)]] <- pathway_genes
+    # If found, use the Kegg ID
+    if (!is.na(match_idx)) {
+      kegg_id <- full_index$`Kegg ID`[match_idx]
+      if (!is.na(kegg_id) && kegg_id != "") {
+        mapped_genes$genes[i] <- kegg_id
+      }
     }
   }
   
-  return(all_pathways)
+  return(mapped_genes)
+}
+
+prepare_gene_rankings <- function(de_data) {
+  # Map genes to the format used in the GMT file if needed
+  mapped_de_data <- map_gene_ids_for_gsea(de_data)
+  
+  gene_list <- mapped_de_data$logFC
+  names(gene_list) <- mapped_de_data$genes
+  gene_list <- sort(gene_list, decreasing = TRUE)
+  return(gene_list)
 }
 
 perform_gsea <- function(ranked_genes, pathways, nperm = 1000) {
@@ -804,6 +849,17 @@ server <- function(input, output, session) {
       )
     
     
+
+    observeEvent(input$calculate_de, {
+      # Your existing code for DE calculation
+      
+      # Add this at the end
+      if(!is.null(de_results())) {
+        updateSelectInput(session, "gsea_contrast", 
+                          choices = unique(de_results()$cond))
+      }
+    })
+    
     tp_de_table <- reactive({
       df <- de_results()
       
@@ -1040,6 +1096,7 @@ server <- function(input, output, session) {
         writeLines(full_text, file)
       }
     )
+    
     updateSelectInput(session, "gsea_contrast", 
                       choices = unique(de_results()$cond))
     
