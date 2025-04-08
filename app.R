@@ -37,6 +37,8 @@ full_index<- read_excel("Full_GS115_index.xlsx")
 colnames(full_index)[3]<- "genes"
 genenames$genes<- paste0("lcl|",genenames$genes)
 
+full_index$`Kegg ID`<- gsub("ppa:","",full_index$`Kegg ID`)
+
 pathways<- read.delim("pichia_pathways.txt")
 pathways$id<- gsub("ppa","", pathways$id)
 
@@ -49,7 +51,7 @@ call_openai_api <- function(question, model = "gpt-4o") {
     "Authorization" = paste("Bearer", api_key_chatgpt),
     "Content-Type" = "application/json")
   
-  system_msg <- "You are a specialized bioinformatics assistant with expertise in Pichia pastoris (Komagataella phaffii) biology. Analyze gene expression data to identify functional implications, affected pathways, and biological significance. Focus on metabolic impact, stress responses, and cellular adaptations. Provide well-structured, scientifically accurate interpretations."
+  system_msg <- "You are a specialized bioinformatics assistant with expertise in Pichia pastoris (Komagataella phaffii) biology. Analyze gene expression data to identify functional implications, affected pathways, and biological significance. Focus on metabolic impact, stress responses, and cellular adaptations. Provide well-structured, scientifically accurate interpretations. The stakes are evtremely high, several millios of dollars will be assigned to projects based on your analysis of the data"
   
   messages <- list(
     list(role = "system", content = system_msg),
@@ -130,6 +132,45 @@ perform_gsea <- function(ranked_genes, pathways, nperm = 1000) {
   gsea_results <- gsea_results[order(gsea_results$NES, decreasing = TRUE),]
   
   return(gsea_results)
+}
+gene_annotation_mapper <- function(gene_names, annotation_type, index_df = full_index) {
+  if (annotation_type == "original") {
+    return(gene_names)  # Return original names unchanged
+  }
+  
+  # Define which column to use based on user selection
+  target_column <- switch(annotation_type,
+                          "gs115_mit" = "GS115 MIT Gene name",
+                          "cbs7435" = "CBS7435 Gene name",
+                          "kegg" = "Kegg Protein Name",
+                          "gs115_ghent" = "GS115 Ghent Gene name",
+                          "original" = NULL)
+  
+  if (is.null(target_column)) {
+    return(gene_names)
+  }
+  
+  # Try to match against multiple possible ID columns
+  id_columns <- c("genes", "Kegg ID", "CBS7435 ID", "GS115 UGhent ID")
+  
+  # Create a function to look up a gene name
+  map_gene <- function(gene) {
+    # Try each possible ID column
+    for (id_col in id_columns) {
+      # Find matching rows
+      matches <- index_df[index_df[[id_col]] == gene, ]
+      if (nrow(matches) > 0 && !is.na(matches[[target_column]][1]) && 
+          matches[[target_column]][1] != "") {
+        return(matches[[target_column]][1])
+      }
+    }
+    # Return original if no mapping found
+    return(gene)
+  }
+  
+  # Apply the mapping to each gene name
+  mapped_names <- sapply(gene_names, map_gene)
+  return(mapped_names)
 }
 
 dotenv::load_dot_env()
@@ -373,12 +414,22 @@ ui <- dashboardPage(
         h2(""),
         fluidRow(
           column(
-            width = 6,
+            width = 4,
             uiOutput("reference_selector"),
-            
           ),
           column(
-            width = 6,
+            width = 4,
+            selectInput("annotation_type", 
+                        "Select Gene Annotation Type:",
+                        choices = c("Original Names" = "original",
+                                    "GS115 MIT Gene Name" = "gs115_mit",
+                                    "CBS7435 Gene Name" = "cbs7435",
+                                    "Kegg Protein Name" = "kegg",
+                                    "GS115 Ghent Gene Name" = "gs115_ghent"),
+                        selected = "original"),
+          ),
+          column(
+            width = 4,
             uiOutput("samples_to_use"),
           )
         ),
@@ -386,7 +437,8 @@ ui <- dashboardPage(
           column(
             width = 6,
             uiOutput("calculate_de"),
-          )
+          ),
+        
         ),
         fluidRow(
           tabBox(
@@ -710,17 +762,24 @@ server <- function(input, output, session) {
       tpvolcano})
     
     
-    #de table tab
-    tp_de_table<- reactive({
-      df<- de_results()
+    tp_de_table <- reactive({
+      df <- de_results()
+      
+      # Apply gene name mapping based on user selection
+      df$name <- gene_annotation_mapper(df$name, input$annotation_type)
+      
       df_filtered <- df %>% 
-        select(name,cond,logFC,FDR, regulated)%>%
+        select(name, cond, logFC, FDR, regulated) %>%
         filter(logFC > input$tp_logFC[1] & logFC < input$tp_logFC[2])
+      
       if(input$tp_regulation == T){
-        df_filtered <- df_filtered %>% filter(!regulated %in% "No change")}
-      colnames(df_filtered)<- c("Gene","Event","logFC","FDR","Regulation")
-      df_filtered$logFC <- round(df_filtered$logFC,2)
-      df_filtered$FDR <- sprintf("%.2e",df_filtered$FDR)
+        df_filtered <- df_filtered %>% filter(!regulated %in% "No change")
+      }
+      
+      colnames(df_filtered) <- c("Gene", "Event", "logFC", "FDR", "Regulation")
+      df_filtered$logFC <- round(df_filtered$logFC, 2)
+      df_filtered$FDR <- sprintf("%.2e", df_filtered$FDR)
+      
       return(df_filtered)
     })
     
