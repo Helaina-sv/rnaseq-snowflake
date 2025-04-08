@@ -8,7 +8,6 @@ library(shinydashboard)
 library(data.table)
 library(readxl)
 library(reshape2)
-library(ggplot2)
 library(ggpmisc)
 library(plotly)
 library(dplyr)
@@ -344,28 +343,73 @@ kegg_map_generator<- function(df,pathway_id){
 }
 
 
-generate_volcano_tp <- function(df, logfc1, logfc2){
-  df$cond<- factor(df$cond, levels = unique(df$cond))
-  tpvolcano<- ggplot(df %>%
-                       filter(abs(logFC)<= logfc2)%>%
-                       filter(abs(logFC)>= logfc1),
-                     aes(logFC, -log10(FDR),
-                         label = name,
-                         color = 
-                           ifelse(regulated %in% "Up-regulated", "#7cae00",
-                                  ifelse(regulated %in% "Down-regulated","#f8766d", "#00bfc4"
-                                  )
-                           ) ) ) +
-    geom_point( size = 0.5) +
-    scale_color_identity(guide = "none") +
-    facet_wrap(~cond, scales = "free")+
+generate_volcano_tp <- function(df, logfc1, logfc2, annotation_type) {
+  df$name <- gene_annotation_mapper(df$name, annotation_type)
+  df$cond <- factor(df$cond, levels = unique(df$cond))
+  
+  # Filter data first
+  df_filtered <- df %>%
+    filter(abs(logFC) <= logfc2, abs(logFC) >= logfc1)
+  
+  # Assign colors manually outside ggplot aes
+  df_filtered$color <- dplyr::case_when(
+    df_filtered$regulated == "Up-regulated"   ~ "#7cae00",
+    df_filtered$regulated == "Down-regulated" ~ "#f8766d",
+    TRUE                                      ~ "#00bfc4"
+  )
+  
+  tpvolcano <- ggplot(df_filtered,
+                      aes(x = logFC, y = -log10(FDR),
+                          text = paste0("Gene: ", name,
+                                        "<br>logFC: ", round(logFC, 2),
+                                        "<br>FDR: ", signif(FDR, 2)))) +
+    geom_point(size = 0.5, color = df_filtered$color) +
+    facet_wrap(~cond, scales = "free") +
+    geom_hline(yintercept = -log10(0.01), linetype = "dashed", color = "gray40", linewidth = 0.5) +
+    geom_vline(xintercept = c(-1, 1), linetype = "dashed", color = "gray40", linewidth = 0.5) +
+    labs(x = "", y = "") +  # Remove ggplot labels
+    theme_bw() +
+    theme(
+      text = element_text(face = "bold", size = 12),
+      legend.position = "none"
+    )
+  
+  ggplotly(tpvolcano, tooltip = "text") %>%
+    layout(
+      showlegend = FALSE,
+      xaxis = list(title = "log₂ Fold Change"),
+      yaxis = list(title = "-log₁₀ FDR")
+    )
+  
+}
+
+
+## For Download only:
+generate_volcano_ggplot <- function(df, logfc1, logfc2, annotation_type) {
+  df$name <- gene_annotation_mapper(df$name, annotation_type)
+  df$cond <- factor(df$cond, levels = unique(df$cond))
+  
+  df_filtered <- df %>%
+    filter(abs(logFC) <= logfc2, abs(logFC) >= logfc1)
+  
+  df_filtered$color <- dplyr::case_when(
+    df_filtered$regulated == "Up-regulated"   ~ "#7cae00",
+    df_filtered$regulated == "Down-regulated" ~ "#f8766d",
+    TRUE                                      ~ "#00bfc4"
+  )
+  
+  ggplot(df_filtered,
+         aes(x = logFC, y = -log10(FDR))) +
+    geom_point(size = 0.5, color = df_filtered$color) +
+    facet_wrap(~cond, scales = "free") +
     geom_hline(yintercept = -log10(0.01), linetype = "dashed", color = "gray40", linewidth = 0.5) +
     geom_vline(xintercept = c(-1, 1), linetype = "dashed", color = "gray40", linewidth = 0.5) +
     labs(x = expression(Log[2]~"Fold Change"), y = expression("-log"[10]~"FDR")) +
-    theme_bw()+
-    theme(text  = element_text( face = "bold", size = 12))
-  
-  tpvolcano
+    theme_bw() +
+    theme(
+      text = element_text(face = "bold", size = 12),
+      legend.position = "none"
+    )
 }
 
 
@@ -452,10 +496,10 @@ ui <- dashboardPage(
                 column(width = 4, downloadButton("download_volcano_tp", "Download Plot"))
               ),
               fluidRow(
-                column(width = 4, checkboxInput("tpshowlabels", "Label genes?", value = FALSE)),
+                #column(width = 4, checkboxInput("tpshowlabels", "Label genes?", value = FALSE)),
                 column(width = 4, sliderInput(inputId = "tp_volcano_logFC", label = "Adjust Fold change", min = 0, max = 20, value = c(0, 10)))
               ),
-              plotOutput(
+              plotlyOutput(
                 "tp_volcano_plot",
                 height = "600px", width = "1100px"
               )
@@ -747,19 +791,17 @@ server <- function(input, output, session) {
   
   observeEvent(input$calculate_de, {
     
-    output$tp_volcano_plot<- renderPlot({
+    output$tp_volcano_plot<- renderPlotly({
       if(is.null(de_results())){
         tpvolcano<- ""
       }
       else{
         df <- de_results()
-        tpvolcano <- generate_volcano_tp(df, input$tp_volcano_logFC[1], input$tp_volcano_logFC[2])
-        if (input$tpshowlabels == TRUE) {
-          tpvolcano<- tpvolcano +
-            geom_label_repel(aes(label = ifelse(abs(logFC)>1 & FDR < 0.05, name, NA)),
-                             max.overlaps = 30)}
+        tpvolcano <- generate_volcano_tp(df, input$tp_volcano_logFC[1], input$tp_volcano_logFC[2], input$annotation_type)
       }
-      tpvolcano})
+      tpvolcano
+      }
+      )
     
     
     tp_de_table <- reactive({
@@ -1113,20 +1155,18 @@ server <- function(input, output, session) {
     )
     
     output$download_volcano_tp <- downloadHandler(
-      filename = function() {"volcano_plot_tp.png"},content = function(file) {
+      filename = function() {"volcano_plot_tp.png"},
+      content = function(file) {
         df <- de_results()
-        if(is.null(df)){
-          tpvolcano<- ""}
-        else {
-          tpvolcano <- generate_volcano_tp(df, input$tp_volcano_logFC[1], input$tp_volcano_logFC[2])
-          if (input$tpshowlabels == TRUE) {
-            tpvolcano<- tpvolcano+
-              geom_label_repel(aes(label = ifelse(abs(logFC)>1 & FDR < 0.05, name, NA)),
-                               max.overlaps = 30)
-          }
-        }
-        ggsave(file, plot = tpvolcano, width = 290, height = 265, units = "mm", device = "png")
-      }) 
+        if (is.null(df)) return(NULL)
+        
+        plot_to_save <- generate_volcano_ggplot(df, input$tp_volcano_logFC[1], input$tp_volcano_logFC[2], input$annotation_type)
+        
+        ggsave(file, plot = plot_to_save, width = 290, height = 265, units = "mm", device = "png")
+      }
+    )
+    
+
   })
 }
 
